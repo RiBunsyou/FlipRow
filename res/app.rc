@@ -1,0 +1,33 @@
+#include <windows.h>
+
+// 应用图标，用于 exe 和任务栏。
+1 ICON "app.ico"
+// 托盘图标，资源 2 为浅色任务栏使用的黑色图标，资源 3 为深色任务栏使用的白色图标。
+2 ICON "tray\\A-black.ico"
+3 ICON "tray\\A-white.ico"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 0,2,0,0
+ PRODUCTVERSION 0,2,0,0
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ BEGIN
+   BLOCK "StringFileInfo"
+   BEGIN
+     BLOCK "040904b0"
+     BEGIN
+       VALUE "FileDescription", "FlipRow (2D stacked Alt+Tab switcher)"
+       VALUE "FileVersion", "0.2.0.0"
+       VALUE "InternalName", "FlipRow"
+       VALUE "OriginalFilename", "FlipRow.exe"
+       VALUE "ProductName", "FlipRow"
+       VALUE "ProductVersion", "0.2.0.0"
+     END
+   END
+   BLOCK "VarFileInfo"
+   BEGIN
+     VALUE "Translation", 0x409, 1200
+   END
+ END

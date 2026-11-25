@@ -1,0 +1,11 @@
+* text=auto
+
+# 批处理和资源脚本必须是 CRLF，否则 cmd 会解析出错
+*.cmd text eol=crlf
+*.rc  text eol=crlf
+*.bat text eol=crlf
+
+# 二进制
+*.ico binary
+*.png binary
+*.exe binary
