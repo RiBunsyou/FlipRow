@@ -282,6 +282,8 @@ std::vector<wins::Win> wins::CollectWindows(bool currentDesktopOnly, bool includ
     GetMonitorInfoW(MonitorFromPoint({ 0, 0 }, MONITOR_DEFAULTTOPRIMARY), &mi);
     for (HWND h = GetTopWindow(nullptr); h; h = GetWindow(h, GW_HWNDNEXT)) {
         if (!IsAltTabWindow(h)) continue;
+        // 登录初期常有程序还卡在启动流程里，对这类窗口发同步消息会让本进程一起卡住。
+        if (IsHungAppWindow(h)) continue;
         const bool mini = IsIconic(h) != FALSE;
         if (mini && !includeMinimized) continue;
         BOOL on = TRUE;
@@ -333,8 +335,10 @@ std::vector<wins::Win> wins::CollectWindows(bool currentDesktopOnly, bool includ
         }
         w.src = src;
         w.exe = ExeOfWindow(h);
+        // 标题通过带超时的消息获取，目标窗口无响应时最多等 100 毫秒。
         wchar_t t[512] = {};
-        GetWindowTextW(h, t, 512);
+        DWORD_PTR copied = 0;
+        if (SendMessageTimeoutW(h, WM_GETTEXT, 512, (LPARAM)t, SMTO_ABORTIFHUNG | SMTO_BLOCK, 100, &copied) == 0) t[0] = 0;
         w.title = t;
         out.push_back(std::move(w));
     }

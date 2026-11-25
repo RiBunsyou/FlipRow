@@ -70,7 +70,7 @@ bool startup::SetEnabled(bool on) {
     // 参数中 exe 路径先用引号包裹，再由外层引号包裹。
     std::wstring inner = L"\\\"" + ExePath() + L"\\\"";
     std::wstring create = L"schtasks.exe /create /tn \"" + std::wstring(kTaskName) + L"\" /tr \"" + inner +
-                          L"\" /sc onlogon /rl highest /f";
+                          L"\" /sc onlogon /delay 0000:20 /rl highest /f";
     if (!RunHidden(create, code)) return false;
     Log(L"开机自启：创建任务（退出码 %lu）%ls", code, create.c_str());
     return code == 0;

@@ -32,6 +32,7 @@ const UINT WM_APP_REHOOK = WM_APP + 72;
 const UINT_PTR T_HOOK_CHECK = 1;
 const UINT_PTR T_DEMO_QUIT = 2;
 const UINT_PTR T_DEMO_NEXT = 3;
+const UINT_PTR T_TRAY_RETRY = 4;
 int g_demoStage = 0;
 int g_demoFront = 0;
 
@@ -213,6 +214,22 @@ LRESULT CALLBACK MsgProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             PostMessageW(h, WM_CLOSE, 0, 0);
             return 0;
         }
+        if (w == T_TRAY_RETRY) {
+            // 登录初期任务栏尚未就绪，添加托盘图标会失败，这里周期性重试。
+            static int tries = 0;
+            if (tray::Present()) {
+                KillTimer(h, T_TRAY_RETRY);
+                Log(L"托盘图标：补加成功");
+                return 0;
+            }
+            if (++tries > 40) {
+                KillTimer(h, T_TRAY_RETRY);
+                Log(L"托盘图标：补加放弃");
+                return 0;
+            }
+            tray::Add(g_msg, TrayCommand, [] { return g_enabled.load(); });
+            return 0;
+        }
         if (w == T_DEMO_NEXT) {  // 演示模式，连续两次打开界面以验证第二次的预览。
             if (g_demoStage == 0) {
                 stack::Key(VK_ESCAPE);
@@ -350,7 +367,9 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int) {
     if (!g_msg) return 1;
     wins::AddOurs(g_msg);
     g_taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
-    tray::Add(g_msg, TrayCommand, [] { return g_enabled.load(); });
+    if (!tray::Add(g_msg, TrayCommand, [] { return g_enabled.load(); })) {
+        SetTimer(g_msg, T_TRAY_RETRY, 3000, nullptr);  // 任务栏未就绪时定时补加。
+    }
 
     if (!noHook) g_hookThread = std::thread(HookThread);
     SetTimer(g_msg, T_HOOK_CHECK, 5000, nullptr);
