@@ -83,7 +83,7 @@ Nothing is written outside the program folder. Running the executable from a rea
 | `--demo2` | Open, close, open again, used to verify the second-open behaviour |
 | `--no-hook` | Do not install the keyboard hook |
 | `--debug` | Verbose logging |
-| `--autostart on` `--autostart off` | Create or remove the scheduled task for start with Windows |
+| `--autostart on` `--autostart off` | Create or remove the Startup folder shortcut for start with Windows |
 | `--version` | Print the version and exit |
 | `--quit` | Stop the running instance |
 
@@ -117,7 +117,7 @@ src/
   gfx.cpp         Direct2D and DirectComposition wrapper, Fluent palette, frame clock
   anim.cpp        easing curves and spring
   tray.cpp        tray icon and menu
-  startup.cpp     start with Windows through Task Scheduler
+  startup.cpp     start with Windows through a Startup folder shortcut
   common.cpp      logging, language, injected key marker
 res/
   app.ico         application icon

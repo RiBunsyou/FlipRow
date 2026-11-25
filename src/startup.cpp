@@ -1,12 +1,19 @@
-// 开机自启模块，通过任务计划程序创建登录时以最高权限运行的任务。
-// 注册表启动项只能启动普通权限进程，开机时会被 UAC 拦截，因此改用任务计划程序。
+// 开机自启模块，在启动文件夹放一个快捷方式，由资源管理器在登录后启动。
+// 程序清单要求管理员权限，快捷方式启动时由系统按 UAC 策略提权。
+// 计划任务方案在部分机器上会以低完整性级别启动，导致托盘和键盘钩子失效，因此不再使用。
 #include "startup.h"
 
+#include <shlobj.h>
+#include <shobjidl.h>
+
 #pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "ole32.lib")
 
 namespace {
 
-const wchar_t* kTaskName = L"FlipRow";
+const wchar_t* kLnkName = L"FlipRow.lnk";
+const wchar_t* kTaskName = L"FlipRow";  // 旧方案创建的计划任务，启用和关闭时一并清理。
 
 std::wstring ExePath() {
     wchar_t buf[MAX_PATH * 2] = {};
@@ -14,27 +21,56 @@ std::wstring ExePath() {
     return buf;
 }
 
-// 启动命令并等待其结束，返回退出码。
-bool RunHidden(const std::wstring& cmdline, DWORD& code) {
+std::wstring AppDir() {
+    std::wstring p = ExePath();
+    auto i = p.find_last_of(L'\\');
+    return i == std::wstring::npos ? std::wstring() : p.substr(0, i);
+}
+
+// 返回启动文件夹中快捷方式的完整路径。
+std::wstring StartupLnk() {
+    PWSTR p = nullptr;
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_Startup, 0, nullptr, &p))) return std::wstring();
+    std::wstring lnk = std::wstring(p) + L"\\" + kLnkName;
+    CoTaskMemFree(p);
+    return lnk;
+}
+
+// 创建指向当前 exe 的快捷方式。
+bool MakeLnk(const std::wstring& lnk) {
+    const bool com = SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED));
+    IShellLinkW* sl = nullptr;
+    bool ok = false;
+    if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&sl)))) {
+        sl->SetPath(ExePath().c_str());
+        sl->SetWorkingDirectory(AppDir().c_str());
+        sl->SetDescription(L"FlipRow");
+        IPersistFile* pf = nullptr;
+        if (SUCCEEDED(sl->QueryInterface(IID_PPV_ARGS(&pf)))) {
+            ok = SUCCEEDED(pf->Save(lnk.c_str(), TRUE));
+            pf->Release();
+        }
+        sl->Release();
+    }
+    if (com) CoUninitialize();
+    return ok;
+}
+
+// 删除旧方案留下的计划任务，没有任务时视为成功。
+bool DeleteTask() {
     STARTUPINFOW si{ sizeof(si) };
     si.dwFlags = STARTF_USESHOWWINDOW;
     si.wShowWindow = SW_HIDE;
     PROCESS_INFORMATION pi{};
-    std::wstring cmd = cmdline;
-    if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-        Log(L"开机自启：启动命令失败 %lu", GetLastError());
-        return false;
-    }
-    WaitForSingleObject(pi.hProcess, 15000);
-    DWORD c = 1;
-    GetExitCodeProcess(pi.hProcess, &c);
+    std::wstring cmd = L"schtasks.exe /delete /tn \"" + std::wstring(kTaskName) + L"\" /f";
+    if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) return true;
+    WaitForSingleObject(pi.hProcess, 10000);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
-    code = c;
     return true;
 }
 
-}
+}  // namespace
 
 bool startup::IsElevated() {
     HANDLE tok = nullptr;
@@ -47,31 +83,27 @@ bool startup::IsElevated() {
 }
 
 int startup::Method() {
-    DWORD code = 1;
-    std::wstring q = L"schtasks.exe /query /tn \"" + std::wstring(kTaskName) + L"\"";
-    if (RunHidden(q, code) && code == 0) return 1;  // 退出码为 0 表示任务已存在。
+    std::wstring lnk = StartupLnk();
+    if (!lnk.empty() && GetFileAttributesW(lnk.c_str()) != INVALID_FILE_ATTRIBUTES) return 1;
     return 0;
 }
 
 bool startup::IsEnabled() { return Method() != 0; }
 
 bool startup::SetEnabled(bool on) {
-    if (!IsElevated()) {
-        Log(L"开机自启：当前不是管理员，任务计划建不了");
+    std::wstring lnk = StartupLnk();
+    if (lnk.empty()) return false;
+    if (!on) {
+        const bool removed = DeleteFileW(lnk.c_str()) != FALSE;
+        DeleteTask();
+        Log(L"开机自启：删除快捷方式 %ls", removed ? L"成功" : L"未找到");
+        return true;
+    }
+    if (!MakeLnk(lnk)) {
+        Log(L"开机自启：创建快捷方式失败");
         return false;
     }
-    DWORD code = 1;
-    if (!on) {
-        std::wstring del = L"schtasks.exe /delete /tn \"" + std::wstring(kTaskName) + L"\" /f";
-        if (!RunHidden(del, code)) return false;
-        Log(L"开机自启：删除任务（退出码 %lu）", code);
-        return code == 0;
-    }
-    // 参数中 exe 路径先用引号包裹，再由外层引号包裹。
-    std::wstring inner = L"\\\"" + ExePath() + L"\\\"";
-    std::wstring create = L"schtasks.exe /create /tn \"" + std::wstring(kTaskName) + L"\" /tr \"" + inner +
-                          L"\" /sc onlogon /delay 0000:20 /rl highest /f";
-    if (!RunHidden(create, code)) return false;
-    Log(L"开机自启：创建任务（退出码 %lu）%ls", code, create.c_str());
-    return code == 0;
+    DeleteTask();
+    Log(L"开机自启：快捷方式已创建 %ls", lnk.c_str());
+    return true;
 }

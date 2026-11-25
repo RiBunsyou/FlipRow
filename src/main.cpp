@@ -341,6 +341,26 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int) {
     Log(L"FlipRow 启动%s", debug ? L"（调试）" : L"");
     Log(L"界面语言：%d / 中文=%d", LangMode(), (int)IsChineseUi());
     Log(L"开机自启：%ls", startup::IsEnabled() ? L"已开启" : L"未开启");
+    // 诊断输出，记录窗口站，桌面，完整性级别和任务栏窗口，用于排查登录启动时的托盘失败。
+    {
+        wchar_t ws[64] = {}, dt[64] = {};
+        DWORD n = 0;
+        GetUserObjectInformationW(GetProcessWindowStation(), UOI_NAME, ws, sizeof(ws), &n);
+        GetUserObjectInformationW(GetThreadDesktop(GetCurrentThreadId()), UOI_NAME, dt, sizeof(dt), &n);
+        DWORD rid = 0;
+        HANDLE tok = nullptr;
+        if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &tok)) {
+            BYTE buf[64] = {};
+            DWORD cb = 0;
+            if (GetTokenInformation(tok, TokenIntegrityLevel, buf, sizeof(buf), &cb)) {
+                SID* sid = (SID*)((TOKEN_MANDATORY_LABEL*)buf)->Label.Sid;
+                rid = sid->SubAuthority[sid->SubAuthorityCount - 1];
+            }
+            CloseHandle(tok);
+        }
+        Log(L"诊断：窗口站 %ls，桌面 %ls，完整性 0x%X，管理员 %d，任务栏 0x%p", ws, dt, rid, (int)startup::IsElevated(),
+            (void*)FindWindowW(L"Shell_TrayWnd", nullptr));
+    }
     if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))) Log(L"COM 初始化失败");
 
     if (!gfx::Init()) {

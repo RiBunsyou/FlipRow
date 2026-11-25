@@ -83,7 +83,7 @@ lang=0    ; 0 跟随系统，1 中文，2 英文
 | `--demo2` | 打开，关闭，再打开，用于验证第二次打开的表现 |
 | `--no-hook` | 不安装键盘钩子 |
 | `--debug` | 输出详细日志 |
-| `--autostart on` `--autostart off` | 创建或删除开机自启的计划任务 |
+| `--autostart on` `--autostart off` | 创建或删除启动文件夹中的快捷方式 |
 | `--version` | 输出版本号后退出 |
 | `--quit` | 退出正在运行的实例 |
 
@@ -117,7 +117,7 @@ src/
   gfx.cpp         Direct2D 与 DirectComposition 封装，Fluent 配色，帧时钟
   anim.cpp        缓动曲线与弹簧
   tray.cpp        托盘图标与菜单
-  startup.cpp     通过任务计划程序实现开机自启
+  startup.cpp     通过启动文件夹快捷方式实现开机自启
   common.cpp      日志，语言，注入按键标记
 res/
   app.ico         应用图标
