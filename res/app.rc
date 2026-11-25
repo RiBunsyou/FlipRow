@@ -19,9 +19,10 @@ VS_VERSION_INFO VERSIONINFO
    BEGIN
      BLOCK "040904b0"
      BEGIN
-       VALUE "FileDescription", "FlipRow (2D stacked Alt+Tab switcher)"
+       VALUE "FileDescription", "FlipRow"
        VALUE "FileVersion", FLIPROW_VERSION_FILE_STRING
        VALUE "InternalName", "FlipRow"
+       VALUE "LegalCopyright", "Copyright (c) 2026 RiBunsyou"
        VALUE "OriginalFilename", "FlipRow.exe"
        VALUE "ProductName", "FlipRow"
        VALUE "ProductVersion", FLIPROW_VERSION_FILE_STRING

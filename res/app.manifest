@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <!-- 程序以普通权限运行，管理员窗口由系统原生切换处理。 -->
+  <!-- 程序以管理员权限运行：底层键盘钩子只有在完整性级别不低于前台窗口时才能收到按键，
+       普通权限进程无法接管管理员窗口的 Alt+Tab。开机自启使用计划任务的最高权限。 -->
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
       <requestedPrivileges>

@@ -98,7 +98,7 @@ bool preview::Window(HWND h, const RECT& src, UINT maxSide, std::vector<BYTE>& p
             int lit = 0;
             for (UINT y = 0; y < sh; y += 11)
                 for (UINT x = 0; x < sw; x += 11)
-                    if (p[(size_t)y * sw + x] & 0xFFFFFF) lit++;  // 全黑表示未取到画面，常见于受保护内容和提权窗口。
+                    if (p[(size_t)y * sw + x] & 0xFFFFFF) lit++;  // 全黑表示未取到画面，常见于受保护进程或 DWM 不提供画面的窗口。
             if (lit > 3) got = true;
         }
         if (got) {

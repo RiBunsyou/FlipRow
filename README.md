@@ -17,20 +17,21 @@ The stock switcher shows a row of small thumbnails, one per window, and the layo
 ## Features
 
 - **Alt+Tab takeover** through a low-level keyboard hook, with Alt release as confirmation and Esc as cancel.
+- **Runs elevated** so the hook shares the integrity level of elevated windows; Task Manager, Registry Editor and other admin windows are covered too.
 - **Deck layout**, the selected card is centered and frontmost, the remaining cards stack to the left with a slight offset, scale and dim falloff.
 - **Tab rotates the deck**, the front card slides to the tail and fades out, the next card moves forward.
-- **Window previews** captured asynchronously on a worker thread, cached per window and refreshed on every open.
+- **Window previews** captured asynchronously on a worker thread, cached per window and refreshed on every open. Elevated windows are captured as well.
 - **Minimized windows** are included, badged, and restored on selection.
 - **Fluent styling**, 8 px corners, accent-tinted translucent chips, white labels, light and dark themes, per-monitor DPI.
 - **Tray menu** in Chinese and English, with language selection and start-with-Windows.
-- **Runs as a normal user**, no UAC prompt at start and at logon.
+- **Elevation on start**, silent when UAC is set to elevate without prompting; if elevation is refused the app falls back to standard rights and says so in the log.
 - Single instance, tray icon, hook watchdog and clean shutdown.
 
 ## Requirements
 
 - Windows 10 version 1809 or later, or Windows 11, x64.
-- No administrator rights required, the executable runs as a normal user.
-- Visual Studio 2022 or newer with the Desktop development with C++ workload, only needed to build.
+- The account must belong to Administrators, the app asks for elevation at start. Whether a UAC prompt appears depends on the UAC policy; with elevate-without-prompt it is silent.
+- Visual Studio 2022 or newer with the Desktop development with C++ workload, only needed to build. The build script needs administrator rights to set the integrity label.
 
 ## Build
 
@@ -40,7 +41,7 @@ build.cmd run      :: compile and run
 build.cmd demo     :: compile and open the overlay once, no hotkey hook
 ```
 
-The build script locates vcvars64 through vswhere, compiles every file under `src`, embeds `res\app.rc` and `res\app.manifest`, and writes `bin\FlipRow.exe`.
+The build script locates vcvars64 through vswhere, compiles every file under `src`, embeds `res\app.rc` and `res\app.manifest`, writes `bin\FlipRow.exe`, and finally sets the exe integrity label to High. The label must not be Medium: when the scheduled task starts the app with elevated rights, a Medium label caps the process back to Medium and the hook stops working.
 
 ## Usage
 
@@ -83,11 +84,16 @@ Nothing is written outside the program folder. Running the executable from a rea
 | `--demo2` | Open, close, open again, used to verify the second-open behaviour |
 | `--no-hook` | Do not install the keyboard hook |
 | `--debug` | Verbose logging |
-| `--autostart on` `--autostart off` | Create or remove the Run key entry for start with Windows |
+| `--autostart on` `--autostart off` | Register or remove the scheduled task for start with Windows |
+| `--no-elevate` | Run with current rights and skip the elevation request, for troubleshooting |
 | `--version` | Print the version and exit |
 | `--quit` | Stop the running instance |
 
+Start with Windows uses a scheduled task instead of a Run key entry: a process started from the Run key is not elevated and its hook cannot cover admin windows. The task starts five seconds after logon, runs with highest privileges, and is allowed to start on battery.
+
 ## How it works
+
+Low-level keyboard hooks are subject to UIPI: a hook only receives input when its process integrity level is at least that of the foreground window. A standard-rights process gets nothing while an elevated window has focus, and synthetic input cannot work around it. FlipRow therefore runs elevated, and two mechanisms guarantee a High process: the build sets the exe integrity label to High, and at start the app re-launches itself through UAC when it is not High.
 
 1. A thread installs a `WH_KEYBOARD_LL` hook and maintains a small state machine for Alt, Tab and Esc. The hook only posts messages, all work happens on the UI thread.
 2. On the first Tab the window list is collected in z-order, filtered with the same rules the shell uses for Alt+Tab, and a full screen DirectComposition overlay is shown.
@@ -100,7 +106,7 @@ Nothing is written outside the program folder. Running the executable from a rea
 - A full screen application that is minimized shows only the upper left part of its content, because the restored window rect is smaller than the full screen size.
 - Visibility is evaluated against the primary monitor only, multi-monitor layouts are not handled yet.
 - Previews are snapshots, video and animation are not visible in the cards.
-- Windows owned by an elevated process are listed but show an icon placeholder, and the keyboard hook does not see input while such a window has focus.
+- Windows of System integrity processes (some system surfaces) still show an icon placeholder; switching on the UAC secure desktop (elevation prompt, lock screen) is not covered, nor is it covered by the native Alt+Tab.
 - The background is a blurred snapshot of the desktop, it does not update while the overlay is open.
 - Rounded corner geometry is rebuilt every frame.
 - Hiding and terminating applications from the switcher is not implemented.
@@ -110,14 +116,14 @@ Nothing is written outside the program folder. Running the executable from a rea
 
 ```
 src/
-  main.cpp        hook, single instance, tray, message dispatch
+  main.cpp        hook, single instance, elevation, tray, message dispatch
   stack.cpp       overlay, deck layout, animation, painting, hit testing
   preview.cpp     window snapshots through DWM thumbnail and PrintWindow
   wins.cpp        window enumeration, grouping, icons, activation, virtual desktops
   gfx.cpp         Direct2D and DirectComposition wrapper, Fluent palette, frame clock
   anim.cpp        easing curves and spring
   tray.cpp        tray icon and menu
-  startup.cpp     start with Windows through the Run key
+  startup.cpp     start with Windows through a scheduled task with highest privileges
   common.cpp      logging, language, injected key marker
 res/
   app.ico         application icon

@@ -1,7 +1,7 @@
 // FlipRow，接管 Alt+Tab 的二维堆叠式应用切换器。
-// 程序为常驻进程，通过全局键盘钩子接收 Alt+Tab，界面是一块全屏 DirectComposition 浮层。
+// 程序为常驻进程，以管理员权限运行，通过全局键盘钩子接收 Alt+Tab，界面是一块全屏 DirectComposition 浮层。
 // 窗口卡片显示快照，快照由 preview.cpp 在工作线程中异步采集。
-// 实时预览，多显示器支持和提权窗口支持属于后续工作。
+// 实时预览和多显示器支持属于后续工作。
 #include <atomic>
 #include <thread>
 
@@ -49,6 +49,66 @@ bool g_winDown = false, g_winCombo = false;
 bool g_altTab = false;
 // 自行跟踪的修饰键状态，注入的按键不参与，避免系统状态被改乱。
 bool g_altDown = false, g_ctrlDown = false, g_shiftDown = false;
+
+// 查找已运行实例的消息窗口。
+HWND FindMsgWindow() {
+    HWND found = nullptr;
+    EnumWindows(
+        [](HWND h, LPARAM l) -> BOOL {
+            wchar_t cls[64] = {};
+            GetClassNameW(h, cls, 64);
+            if (!wcscmp(cls, L"FlipRowMsg")) {
+                *(HWND*)l = h;
+                return FALSE;
+            }
+            return TRUE;
+        },
+        (LPARAM)&found);
+    return found;
+}
+
+// 判断窗口所属进程是否提权，用于识别旧版本留下的普通权限实例。
+bool WindowElevated(HWND h) {
+    DWORD pid = 0;
+    GetWindowThreadProcessId(h, &pid);
+    if (!pid) return false;
+    HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!proc) return false;
+    bool elevated = false;
+    HANDLE tok = nullptr;
+    if (OpenProcessToken(proc, TOKEN_QUERY, &tok)) {
+        TOKEN_ELEVATION el{};
+        DWORD cb = sizeof(el);
+        elevated = GetTokenInformation(tok, TokenElevation, &el, sizeof(el), &cb) && el.TokenIsElevated;
+        CloseHandle(tok);
+    }
+    CloseHandle(proc);
+    return elevated;
+}
+
+// 以管理员权限重新启动本程序。计划任务、快捷方式和普通启动都通过 CreateProcess
+// 创建进程，令牌的完整性级别可能被 exe 文件的完整性标签压到中级，而底层键盘钩子
+// 必须与管理员窗口同级才能收到按键，所以这里统一再走一次 UAC 提权。
+bool RelaunchElevated(std::wstring params) {
+    wchar_t exe[MAX_PATH * 2] = {};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH * 2);
+    if (!params.empty()) params += L' ';
+    params += L"--no-elevate";  // 抑制提权后的进程再次进入本函数
+
+    SHELLEXECUTEINFOW sei{ sizeof(sei) };
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
+    sei.lpVerb = L"runas";
+    sei.lpFile = exe;
+    sei.lpParameters = params.c_str();
+    sei.nShow = SW_SHOWNORMAL;
+    if (!ShellExecuteExW(&sei)) {
+        BootLog(L"提权：请求失败 %lu", GetLastError());
+        return false;
+    }
+    if (sei.hProcess) CloseHandle(sei.hProcess);
+    BootLog(L"提权：已启动管理员权限的实例");
+    return true;
+}
 
 // 取得前台切换资格，先注入一次 Alt 按下和松开，中间插入一个无功能键。
 // 前台程序因此收不到单独的 Alt 键，不会展开菜单。
@@ -190,9 +250,12 @@ void TrayCommand(int id) {
     }
     case 6: {  // 关于对话框，显示版本号，项目地址和许可证。
         wchar_t msg[512] = {};
-        swprintf_s(msg, Tr(L"FlipRow %ls\n二维堆叠式 Alt+Tab 窗口切换器\n\nhttps://github.com/RiBunsyou/FlipRow\nGNU 通用公共许可证第 3 版",
-                           L"FlipRow %ls\n2D stacked Alt+Tab switcher\n\nhttps://github.com/RiBunsyou/FlipRow\nGNU General Public License v3.0"),
-                   FLIPROW_VERSION_WSTRING);
+        swprintf_s(msg,
+                   Tr(L"FlipRow %ls\n二维堆叠式 Alt+Tab 窗口切换器\n运行权限：%ls\n\nhttps://github.com/RiBunsyou/FlipRow\nGNU 通用公共许可证第 3 版",
+                      L"FlipRow %ls\n2D stacked Alt+Tab switcher\nPermissions: %ls\n\nhttps://github.com/RiBunsyou/FlipRow\nGNU General Public License v3.0"),
+                   FLIPROW_VERSION_WSTRING,
+                   startup::IsElevated() ? Tr(L"管理员（可接管管理员窗口）", L"administrator (elevated windows included)")
+                                         : Tr(L"标准用户（管理员窗口不接管）", L"standard user (elevated windows excluded)"));
         MessageBoxW(nullptr, msg, Tr(L"关于 FlipRow", L"About FlipRow"), MB_ICONINFORMATION);
         break;
     }
@@ -290,12 +353,14 @@ void Cleanup() {
 
 int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int) {
     BootLog(L"启动：%ls", GetCommandLineW());
+    // COM 在启动早期初始化，自启状态查询使用任务计划服务，--autostart 分支也依赖它。
+    if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))) BootLog(L"COM 初始化失败");
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     bool noHook = false, demo = false, demo2 = false, demo0 = false, wantQuit = false, debug = false;
-    bool autoSet = false, autoOn = false, versionOnly = false;
+    bool autoSet = false, autoOn = false, versionOnly = false, noElevate = false;
     for (int i = 1; argv && i < argc; i++) {
         if (!_wcsicmp(argv[i], L"--no-hook")) noHook = true;
         else if (!_wcsicmp(argv[i], L"--demo")) demo = true;
@@ -307,6 +372,15 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int) {
         } else if (!_wcsicmp(argv[i], L"--version")) versionOnly = true;
         else if (!_wcsicmp(argv[i], L"--quit")) wantQuit = true;
         else if (!_wcsicmp(argv[i], L"--debug")) debug = true;
+        else if (!_wcsicmp(argv[i], L"--no-elevate")) noElevate = true;
+    }
+    // 提权重启时原样传递参数，含空格的参数重新加引号。
+    std::wstring restArgs;
+    for (int i = 1; argv && i < argc; i++) {
+        std::wstring a = argv[i];
+        if (!restArgs.empty()) restArgs += L' ';
+        if (a.find(L' ') != std::wstring::npos) a = L"\"" + a + L"\"";
+        restArgs += a;
     }
     if (argv) LocalFree(argv);
     if (demo || demo2 || demo0) noHook = true;  // 演示模式不接管用户热键。
@@ -326,6 +400,14 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int) {
         return 0;
     }
 
+    // 权限：不是 High 完整性时先提权重启，成功则由新进程接管后续流程。
+    // 计划任务等 CreateProcess 路径可能被 exe 的完整性标签压到中级，
+    // 而底层键盘钩子只有和前台的管理员窗口同级才收得到按键。
+    if (!noElevate && !startup::IsHighIntegrity()) {
+        if (RelaunchElevated(restArgs)) return 0;
+        BootLog(L"提权：未获得管理员权限，继续以标准权限运行");
+    }
+
     // 命令行设置开机自启，设置完成后退出。
     if (autoSet) {
         InitLog(debug);
@@ -337,22 +419,27 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int) {
 
 
     // 单实例控制，重复启动时打开切换器，--quit 用于退出已运行的实例。
-    HANDLE once = CreateMutexW(nullptr, TRUE, L"FlipRow-7C2E1B90");
+    HANDLE once = CreateMutexW(nullptr, TRUE, kMutexName);
     if (once && GetLastError() == ERROR_ALREADY_EXISTS) {
-        HWND other = nullptr;
-        EnumWindows(
-            [](HWND h, LPARAM l) -> BOOL {
-                wchar_t cls[64] = {};
-                GetClassNameW(h, cls, 64);
-                if (!wcscmp(cls, L"FlipRowMsg")) {
-                    *(HWND*)l = h;
-                    return FALSE;
-                }
-                return TRUE;
-            },
-            (LPARAM)&other);
-        if (other) PostMessageW(other, wantQuit ? WM_CLOSE : WM_APP_DEMO, 0, 0);
-        return 0;
+        HWND other = FindMsgWindow();
+        if (other && !wantQuit && startup::IsHighIntegrity() && !WindowElevated(other)) {
+            // 旧实例权限更低，既无法接管管理员窗口也没有必要保留，由本进程关闭后接手。
+            // 该路径用于从普通权限版本升级，或以管理员身份重启。
+            BootLog(L"启动：接管权限更低的旧实例");
+            PostMessageW(other, WM_CLOSE, 0, 0);
+            CloseHandle(once);
+            once = nullptr;
+            for (int i = 0; i < 50 && !once; i++) {
+                Sleep(100);
+                HANDLE m = CreateMutexW(nullptr, TRUE, kMutexName);
+                if (m && GetLastError() != ERROR_ALREADY_EXISTS) once = m;
+                else if (m) CloseHandle(m);
+            }
+            if (!once) return 0;
+        } else {
+            if (other) PostMessageW(other, wantQuit ? WM_CLOSE : WM_APP_DEMO, 0, 0);
+            return 0;
+        }
     }
     if (wantQuit) return 0;
 
@@ -362,6 +449,9 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int) {
     Log(L"FlipRow 启动%s", debug ? L"（调试）" : L"");
     Log(L"界面语言：%d / 中文=%d", LangMode(), (int)IsChineseUi());
     Log(L"开机自启：%ls", startup::IsEnabled() ? L"已开启" : L"未开启");
+    Log(L"运行权限：%ls，完整性 High=%d", startup::IsElevated() ? L"管理员" : L"标准用户", (int)startup::IsHighIntegrity());
+    if (!startup::IsHighIntegrity())
+        Log(L"警告：未以管理员权限运行，管理员窗口在前台时 Alt+Tab 仍由系统接管");
     // 诊断输出，记录窗口站，桌面，完整性级别和任务栏窗口，用于排查登录启动时的托盘失败。
     {
         wchar_t ws[64] = {}, dt[64] = {};
@@ -382,8 +472,6 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int) {
         Log(L"诊断：窗口站 %ls，桌面 %ls，完整性 0x%X，管理员 %d，任务栏 0x%p", ws, dt, rid, (int)startup::IsElevated(),
             (void*)FindWindowW(L"Shell_TrayWnd", nullptr));
     }
-    if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))) Log(L"COM 初始化失败");
-
     if (!gfx::Init()) {
         BootLog(L"gfx 初始化失败");
         MessageBoxW(nullptr, Tr(L"Direct2D / DirectWrite 初始化失败。", L"Direct2D / DirectWrite initialization failed."), L"FlipRow",
