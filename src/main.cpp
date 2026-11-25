@@ -33,6 +33,7 @@ const UINT_PTR T_HOOK_CHECK = 1;
 const UINT_PTR T_DEMO_QUIT = 2;
 const UINT_PTR T_DEMO_NEXT = 3;
 const UINT_PTR T_TRAY_RETRY = 4;
+const wchar_t* kMutexName = L"FlipRow-7C2E1B90";
 int g_demoStage = 0;
 int g_demoFront = 0;
 
@@ -46,6 +47,8 @@ UINT g_taskbarCreated = 0;
 // 键盘钩子状态，仅钩子线程访问。
 bool g_winDown = false, g_winCombo = false;
 bool g_altTab = false;
+// 自行跟踪的修饰键状态，注入的按键不参与，避免系统状态被改乱。
+bool g_altDown = false, g_ctrlDown = false, g_shiftDown = false;
 
 // 取得前台切换资格，先注入一次 Alt 按下和松开，中间插入一个无功能键。
 // 前台程序因此收不到单独的 Alt 键，不会展开菜单。
@@ -77,13 +80,21 @@ LRESULT CALLBACK KeyHook(int code, WPARAM w, LPARAM l) {
     if (!g_enabled) return CallNextHookEx(g_kbHook.load(), code, w, l);
 
     bool down = w == WM_KEYDOWN || w == WM_SYSKEYDOWN;
+    const UINT vk = k->vkCode;
+    if (vk == VK_MENU || vk == VK_LMENU || vk == VK_RMENU) g_altDown = down;
+    if (vk == VK_CONTROL || vk == VK_LCONTROL || vk == VK_RCONTROL) g_ctrlDown = down;
+    if (vk == VK_SHIFT || vk == VK_LSHIFT || vk == VK_RSHIFT) g_shiftDown = down;
+    // 系统状态可能被注入的按键改乱，任一来源认为按下即算按下。
+    const bool alt = g_altDown || GetAsyncKeyState(VK_MENU) < 0;
+    const bool ctrl = g_ctrlDown || GetAsyncKeyState(VK_CONTROL) < 0;
+    const bool shift = g_shiftDown || GetAsyncKeyState(VK_SHIFT) < 0;
     bool win = k->vkCode == VK_LWIN || k->vkCode == VK_RWIN;
     if (LogDebugOn() && (k->vkCode == VK_TAB || win || k->vkCode == VK_LMENU || k->vkCode == VK_RMENU || k->vkCode == VK_ESCAPE))
         LogDbg(L"钩子：vk=%u down=%d winDown=%d alt=%d", k->vkCode, (int)down, (int)g_winDown, (int)g_altTab);
 
     // Win 和 Alt 的松开可能被其他窗口拦截，此处用实际按键状态兜底。
     if (!win && g_winDown && GetAsyncKeyState(VK_LWIN) >= 0 && GetAsyncKeyState(VK_RWIN) >= 0) g_winDown = false;
-    if (g_altTab && k->vkCode != VK_LMENU && k->vkCode != VK_RMENU && k->vkCode != VK_MENU && GetAsyncKeyState(VK_MENU) >= 0) {
+    if (g_altTab && !alt && k->vkCode != VK_LMENU && k->vkCode != VK_RMENU && k->vkCode != VK_MENU) {
         g_altTab = false;
         PostMessageW(g_msg, WM_APP_SWITCH_END, 0, 0);
     }
@@ -102,11 +113,16 @@ LRESULT CALLBACK KeyHook(int code, WPARAM w, LPARAM l) {
     }
 
     // Alt+Tab 分支，负责打开界面和轮换。
-    if (k->vkCode == VK_TAB && down && !g_winDown && GetAsyncKeyState(VK_MENU) < 0 && GetAsyncKeyState(VK_CONTROL) >= 0) {
-        if (!g_altTab) MuteKey();
-        g_altTab = true;
-        PostMessageW(g_msg, WM_APP_SWITCH, GetAsyncKeyState(VK_SHIFT) < 0 ? (WPARAM)-1 : 1, 0);
-        return 1;
+    if (vk == VK_TAB) {
+        if (!down) return g_altTab ? 1 : CallNextHookEx(g_kbHook.load(), code, w, l);  // 抬起事件在切换期间一并吞掉。
+        const bool handled = !g_winDown && alt && !ctrl;
+        Log(L"Tab：alt=%d ctrl=%d win=%d -> %ls", (int)alt, (int)ctrl, (int)g_winDown, handled ? L"接管" : L"放行");
+        if (handled) {
+            if (!g_altTab) MuteKey();
+            g_altTab = true;
+            PostMessageW(g_msg, WM_APP_SWITCH, shift ? (WPARAM)-1 : 1, 0);
+            return 1;
+        }
     }
     if (g_altTab && down && (k->vkCode == VK_ESCAPE || k->vkCode == VK_LEFT || k->vkCode == VK_RIGHT)) {
         if (k->vkCode == VK_ESCAPE) g_altTab = false;  // 取消本次切换，松开 Alt 时不再提交。
@@ -151,6 +167,7 @@ void HookThread() {
         g_kbHook = nullptr;
     }
 }
+
 
 void TrayCommand(int id) {
     switch (id) {
@@ -206,7 +223,10 @@ LRESULT CALLBACK MsgProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         return 0;
     case WM_TIMER:
         if (w == T_HOOK_CHECK) {
-            if (!g_kbHook && g_hookThreadId) PostThreadMessageW(g_hookThreadId, WM_APP_REHOOK, 0, 0);
+            // 钩子可能被系统静默移除，没有切换时每隔一分钟重装一次。
+            static int ticks = 0;
+            const bool reinstall = !g_kbHook || (++ticks % 12 == 0 && !g_altTab);
+            if (reinstall && g_hookThreadId) PostThreadMessageW(g_hookThreadId, WM_APP_REHOOK, 0, 0);
             return 0;
         }
         if (w == T_DEMO_QUIT) {
@@ -314,6 +334,7 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int) {
         LogFlush();
         return ok ? 0 : 1;
     }
+
 
     // 单实例控制，重复启动时打开切换器，--quit 用于退出已运行的实例。
     HANDLE once = CreateMutexW(nullptr, TRUE, L"FlipRow-7C2E1B90");

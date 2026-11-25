@@ -26,6 +26,8 @@ rem 编译图标和版本资源。
 rc /nologo /i res /fo obj\app.res res\app.rc || exit /b 1
 set LIBS=user32.lib gdi32.lib ole32.lib oleaut32.lib shell32.lib shlwapi.lib d2d1.lib dwrite.lib d3d11.lib dxgi.lib dcomp.lib dwmapi.lib windowscodecs.lib version.lib advapi32.lib shcore.lib uuid.lib
 cl /nologo /EHsc /O2 /W3 /std:c++20 /utf-8 /DUNICODE /D_UNICODE /Fo:obj\ /Fd:obj\ src\*.cpp obj\app.res /Fe:bin\FlipRow.exe /link /SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTUAC:NO /MANIFESTINPUT:res\app.manifest %LIBS% || exit /b 1
+rem 清除文件可能继承的低完整性标签，带低标签的 exe 会被系统按低权限启动。
+icacls "bin\FlipRow.exe" /setintegritylevel Medium >nul 2>nul
 echo.
 echo ok: bin\FlipRow.exe
 if /i "%1"=="run" start "" "%ROOT%bin\FlipRow.exe"

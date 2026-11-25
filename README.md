@@ -23,13 +23,13 @@ The stock switcher shows a row of small thumbnails, one per window, and the layo
 - **Minimized windows** are included, badged, and restored on selection.
 - **Fluent styling**, 8 px corners, accent-tinted translucent chips, white labels, light and dark themes, per-monitor DPI.
 - **Tray menu** in Chinese and English, with language selection and start-with-Windows.
-- **Runs elevated**, so the hook also works while an administrator window has focus.
+- **Runs as a normal user**, no UAC prompt at start and at logon.
 - Single instance, tray icon, hook watchdog and clean shutdown.
 
 ## Requirements
 
 - Windows 10 version 1809 or later, or Windows 11, x64.
-- Administrator rights. The executable requests elevation through its manifest.
+- No administrator rights required, the executable runs as a normal user.
 - Visual Studio 2022 or newer with the Desktop development with C++ workload, only needed to build.
 
 ## Build
@@ -53,7 +53,7 @@ The build script locates vcvars64 through vswhere, compiles every file under `sr
 | `Left` `Right` or wheel | Move the selection |
 | Click a card | Switch to it immediately |
 | Tray left click | Open the switcher |
-| Tray right click | Language, hotkey takeover, start with Windows, quit |
+| Tray right click | Language, hotkey takeover, start with Windows, about, quit |
 
 The first press opens the overlay with the current foreground window in front. Every additional press moves the front card to the tail.
 
@@ -83,7 +83,7 @@ Nothing is written outside the program folder. Running the executable from a rea
 | `--demo2` | Open, close, open again, used to verify the second-open behaviour |
 | `--no-hook` | Do not install the keyboard hook |
 | `--debug` | Verbose logging |
-| `--autostart on` `--autostart off` | Create or remove the Startup folder shortcut for start with Windows |
+| `--autostart on` `--autostart off` | Create or remove the Run key entry for start with Windows |
 | `--version` | Print the version and exit |
 | `--quit` | Stop the running instance |
 
@@ -100,7 +100,7 @@ Nothing is written outside the program folder. Running the executable from a rea
 - A full screen application that is minimized shows only the upper left part of its content, because the restored window rect is smaller than the full screen size.
 - Visibility is evaluated against the primary monitor only, multi-monitor layouts are not handled yet.
 - Previews are snapshots, video and animation are not visible in the cards.
-- Windows owned by another elevated process cannot be captured, and the hook does not receive input while such a window has focus.
+- Windows owned by an elevated process are listed but show an icon placeholder, and the keyboard hook does not see input while such a window has focus.
 - The background is a blurred snapshot of the desktop, it does not update while the overlay is open.
 - Rounded corner geometry is rebuilt every frame.
 - Hiding and terminating applications from the switcher is not implemented.
@@ -117,11 +117,11 @@ src/
   gfx.cpp         Direct2D and DirectComposition wrapper, Fluent palette, frame clock
   anim.cpp        easing curves and spring
   tray.cpp        tray icon and menu
-  startup.cpp     start with Windows through a Startup folder shortcut
+  startup.cpp     start with Windows through the Run key
   common.cpp      logging, language, injected key marker
 res/
   app.ico         application icon
-  app.manifest    requireAdministrator, per monitor DPI
+  app.manifest    asInvoker, per monitor DPI
   tray/           monochrome tray icons, black and white variants
 docs/
   screenshot.png  rendering mockup
