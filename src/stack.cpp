@@ -130,7 +130,62 @@ void DrawContain(ID2D1DeviceContext* dc, ID2D1Bitmap* b, const D2D1_RECT_F& r) {
                    D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
 }
 
-// 抓取桌面缩略图，缩小后放大用作模糊背景。
+// 对 BGRA 像素做多遍盒式模糊，效果接近高斯模糊，边缘按镜像方式取样。
+void BoxBlurBGRA(std::vector<BYTE>& px, int w, int h, int radius, int passes) {
+    if (radius < 1 || w < 2 || h < 2) return;
+    const int span = 2 * radius + 1;
+    std::vector<BYTE> tmp(px.size());
+    for (int pass = 0; pass < passes; pass++) {
+        for (int y = 0; y < h; y++) {
+            const BYTE* src = px.data() + (size_t)y * w * 4;
+            BYTE* dst = tmp.data() + (size_t)y * w * 4;
+            int b = 0, g = 0, r = 0;
+            for (int i = -radius; i <= radius; i++) {
+                const int x = std::clamp(i, 0, w - 1);
+                b += src[x * 4 + 0];
+                g += src[x * 4 + 1];
+                r += src[x * 4 + 2];
+            }
+            for (int x = 0; x < w; x++) {
+                dst[x * 4 + 0] = (BYTE)(b / span);
+                dst[x * 4 + 1] = (BYTE)(g / span);
+                dst[x * 4 + 2] = (BYTE)(r / span);
+                dst[x * 4 + 3] = 255;
+                const int add = std::clamp(x + radius + 1, 0, w - 1);
+                const int sub = std::clamp(x - radius, 0, w - 1);
+                b += src[add * 4 + 0] - src[sub * 4 + 0];
+                g += src[add * 4 + 1] - src[sub * 4 + 1];
+                r += src[add * 4 + 2] - src[sub * 4 + 2];
+            }
+        }
+        for (int x = 0; x < w; x++) {
+            int b = 0, g = 0, r = 0;
+            for (int i = -radius; i <= radius; i++) {
+                const int y = std::clamp(i, 0, h - 1);
+                const BYTE* s = tmp.data() + ((size_t)y * w + x) * 4;
+                b += s[0];
+                g += s[1];
+                r += s[2];
+            }
+            for (int y = 0; y < h; y++) {
+                BYTE* d = px.data() + ((size_t)y * w + x) * 4;
+                d[0] = (BYTE)(b / span);
+                d[1] = (BYTE)(g / span);
+                d[2] = (BYTE)(r / span);
+                d[3] = 255;
+                const int add = std::clamp(y + radius + 1, 0, h - 1);
+                const int sub = std::clamp(y - radius, 0, h - 1);
+                const BYTE* sa = tmp.data() + ((size_t)add * w + x) * 4;
+                const BYTE* ss = tmp.data() + ((size_t)sub * w + x) * 4;
+                b += sa[0] - ss[0];
+                g += sa[1] - ss[1];
+                r += sa[2] - ss[2];
+            }
+        }
+    }
+}
+
+// 抓取桌面缩成四分之一并做高斯模糊，作为浮层的亚克力背景。
 void MakeBackdrop() {
     if (g_desk) {
         g_desk->Release();
@@ -138,7 +193,7 @@ void MakeBackdrop() {
     }
     int w = g_mon.right - g_mon.left, h = g_mon.bottom - g_mon.top;
     if (w <= 0 || h <= 0) return;
-    int bw = 192, bh = std::max(1, (int)std::lround(192.0 * h / w));
+    const int bw = std::max(64, w / 4), bh = std::max(64, h / 4);
     HDC sdc = GetDC(nullptr);
     HDC mdc = CreateCompatibleDC(sdc);
     BITMAPINFO bi{};
@@ -153,6 +208,7 @@ void MakeBackdrop() {
         GdiFlush();
         std::vector<BYTE> px((const BYTE*)bits, (const BYTE*)bits + (size_t)bw * bh * 4);
         for (size_t i = 3; i < px.size(); i += 4) px[i] = 255;
+        BoxBlurBGRA(px, bw, bh, 7, 3);
         g_desk = gfx::Bitmap(gfx::Dc(), bw, bh, px);
         SelectObject(mdc, old);
         DeleteObject(bm);
@@ -351,14 +407,16 @@ void Paint() {
                 g_desk ? 1 : 0);
     }
 
-    // 绘制背景。
+    // 绘制背景，模糊画面之上再压一层亚克力底色。
     if (g_desk) DrawCover(dc, g_desk, D2D1::RectF(0, 0, W, H));
     if (auto* br = gfx::Brush()) {
-        if (!g_desk) {
-            br->SetColor(D2D1::ColorF(0.05f, 0.05f, 0.07f, 1));
-            dc->FillRectangle(D2D1::RectF(0, 0, W, H), br);
+        if (g_desk) {
+            const float a = t.dark ? 0.62f : 0.74f;
+            br->SetColor(t.dark ? D2D1::ColorF(0.09f, 0.10f, 0.12f, a * g_fade)
+                                : D2D1::ColorF(0.97f, 0.97f, 0.98f, a * g_fade));
+        } else {
+            br->SetColor(D2D1::ColorF(0.05f, 0.05f, 0.07f, g_fade));
         }
-        br->SetColor(D2D1::ColorF(0, 0, 0, (t.dark ? 0.60f : 0.50f) * g_fade));
         dc->FillRectangle(D2D1::RectF(0, 0, W, H), br);
     }
 
@@ -412,10 +470,17 @@ void Paint() {
         FluentChip(dc, pill, 17.f);
         gfx::Text(dc, buf, tf, pill, D2D1::ColorF(1, 1, 1, 0.97f));
     }
-    // 底部操作提示。
+    // 底部操作提示，浅色主题用深色字配白色描边，深色主题用白字配暗影。
     if (auto* tf = gfx::Format(12.f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER)) {
-        ShadowText(dc, Tr(L"Tab / ← → 切换   ·   松开 Alt 确认   ·   Esc 取消", L"Tab / arrows to cycle   ·   release Alt to switch   ·   Esc to cancel"),
-                   tf, D2D1::RectF(0, H - 60, W, H - 26), D2D1::ColorF(1, 1, 1, 0.92f));
+        const std::wstring hint = Tr(L"Tab / ← → 切换   ·   松开 Alt 确认   ·   Esc 取消",
+                                     L"Tab / arrows to cycle   ·   release Alt to switch   ·   Esc to cancel");
+        const D2D1_RECT_F r = D2D1::RectF(0, H - 60, W, H - 26);
+        if (t.dark) {
+            ShadowText(dc, hint, tf, r, D2D1::ColorF(1, 1, 1, 0.92f));
+        } else {
+            gfx::Text(dc, hint, tf, D2D1::RectF(r.left, r.top + 1.5f, r.right, r.bottom + 1.5f), D2D1::ColorF(1, 1, 1, 0.6f));
+            gfx::Text(dc, hint, tf, r, D2D1::ColorF(0.10f, 0.11f, 0.13f, 0.92f));
+        }
     }
     gfx::End(g_layer);
 }

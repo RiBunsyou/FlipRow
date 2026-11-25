@@ -101,7 +101,7 @@ Nothing is written outside the program folder. Running the executable from a rea
 - Visibility is evaluated against the primary monitor only, multi-monitor layouts are not handled yet.
 - Previews are snapshots, video and animation are not visible in the cards.
 - Windows owned by another elevated process cannot be captured, and the hook does not receive input while such a window has focus.
-- The background is a scaled down desktop image, not a real backdrop blur.
+- The background is a blurred snapshot of the desktop, it does not update while the overlay is open.
 - Rounded corner geometry is rebuilt every frame.
 - Hiding and terminating applications from the switcher is not implemented.
 - A full screen exclusive application can cover the overlay.
