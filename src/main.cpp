@@ -13,6 +13,7 @@
 #include "stack.h"
 #include "startup.h"
 #include "tray.h"
+#include "version.h"
 #include "wins.h"
 
 #pragma comment(lib, "shell32.lib")
@@ -169,6 +170,14 @@ void TrayCommand(int id) {
         Log(L"开机自启：%ls（%ls）", on ? L"开" : L"关", ok ? L"成功" : L"失败");
         break;
     }
+    case 6: {  // 关于对话框，显示版本号，项目地址和许可证。
+        wchar_t msg[512] = {};
+        swprintf_s(msg, Tr(L"FlipRow %ls\n二维堆叠式 Alt+Tab 窗口切换器\n\nhttps://github.com/RiBunsyou/FlipRow\nGNU 通用公共许可证第 3 版",
+                           L"FlipRow %ls\n2D stacked Alt+Tab switcher\n\nhttps://github.com/RiBunsyou/FlipRow\nGNU General Public License v3.0"),
+                   FLIPROW_VERSION_WSTRING);
+        MessageBoxW(nullptr, msg, Tr(L"关于 FlipRow", L"About FlipRow"), MB_ICONINFORMATION);
+        break;
+    }
     case 4: PostMessageW(g_msg, WM_CLOSE, 0, 0); break;
     }
 }
@@ -249,7 +258,7 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int) {
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     bool noHook = false, demo = false, demo2 = false, demo0 = false, wantQuit = false, debug = false;
-    bool autoSet = false, autoOn = false;
+    bool autoSet = false, autoOn = false, versionOnly = false;
     for (int i = 1; argv && i < argc; i++) {
         if (!_wcsicmp(argv[i], L"--no-hook")) noHook = true;
         else if (!_wcsicmp(argv[i], L"--demo")) demo = true;
@@ -258,12 +267,27 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int) {
         else if (!_wcsicmp(argv[i], L"--autostart") && i + 1 < argc) {
             autoOn = !_wcsicmp(argv[++i], L"on");
             autoSet = true;
-        } else if (!_wcsicmp(argv[i], L"--quit")) wantQuit = true;
+        } else if (!_wcsicmp(argv[i], L"--version")) versionOnly = true;
+        else if (!_wcsicmp(argv[i], L"--quit")) wantQuit = true;
         else if (!_wcsicmp(argv[i], L"--debug")) debug = true;
     }
     if (argv) LocalFree(argv);
     if (demo || demo2 || demo0) noHook = true;  // 演示模式不接管用户热键。
     g_demoFront = demo0 ? 1 : 0;
+
+    // 命令行输出版本号，有控制台就打印，同时写入启动日志便于核对。
+    if (versionOnly) {
+        if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+            FILE* out = nullptr;
+            freopen_s(&out, "CONOUT$", "w", stdout);
+            wprintf(L"FlipRow %ls\n", FLIPROW_VERSION_WSTRING);
+            fflush(stdout);
+            if (out) fclose(out);
+            FreeConsole();
+        }
+        BootLog(L"FlipRow %ls", FLIPROW_VERSION_WSTRING);
+        return 0;
+    }
 
     // 命令行设置开机自启，设置完成后退出。
     if (autoSet) {

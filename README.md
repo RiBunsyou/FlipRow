@@ -84,6 +84,7 @@ Nothing is written outside the program folder. Running the executable from a rea
 | `--no-hook` | Do not install the keyboard hook |
 | `--debug` | Verbose logging |
 | `--autostart on` `--autostart off` | Create or remove the scheduled task for start with Windows |
+| `--version` | Print the version and exit |
 | `--quit` | Stop the running instance |
 
 ## How it works

@@ -46,6 +46,7 @@ void ShowMenu() {
         AppendMenuW(m, MF_POPUP, (UINT_PTR)lang, Tr(L"语言", L"Language"));
     }
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING, 6, Tr(L"关于 FlipRow", L"About FlipRow"));
     AppendMenuW(m, MF_STRING, 4, Tr(L"退出", L"Exit"));
     POINT p;
     GetCursorPos(&p);

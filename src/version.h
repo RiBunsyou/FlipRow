@@ -1,0 +1,13 @@
+// 版本号定义，供资源脚本和源码共用。
+#pragma once
+
+#define FLIPROW_VERSION_MAJOR 0
+#define FLIPROW_VERSION_MINOR 2
+#define FLIPROW_VERSION_PATCH 0
+
+#define FLIPROW_VERSION_STRING "0.2.0"
+#define FLIPROW_VERSION_FILE_STRING "0.2.0.0"
+
+#ifndef RC_INVOKED
+#define FLIPROW_VERSION_WSTRING L"0.2.0"
+#endif
